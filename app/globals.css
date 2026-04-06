@@ -128,3 +128,9 @@
     @apply font-sans;
   }
 }
+@utility gradient {
+  @apply bg-gradient-to-r from-green-600 to-teal-500;
+}
+@utility gradient-title {
+  @apply gradient font-extrabold tracking-tighter text-transparent bg-clip-text pb-1 pr-2;
+}
