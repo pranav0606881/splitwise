@@ -13,6 +13,16 @@ import { usePathname } from "next/navigation";
 
 export default function Header() {
   const { isLoading } = useStoreUser();
+  /* function useStoreUser() {
+  return {
+    user: { name: "Pranav" },
+    isLoading: true,
+  };
+} 
+const { isLoading } = useStoreUser();
+const temp = useStoreUser();
+const isLoading = temp.isLoading;  
+*/
   const path = usePathname();
 
   return (
