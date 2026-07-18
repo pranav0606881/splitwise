@@ -27,6 +27,7 @@ import {
   ArrowRight,
   CheckCircle,
   Loader2,
+  Info,
 } from "lucide-react";
 import { ExpenseList } from "@/components/expense-list";
 import { SettlementList } from "@/components/settlement-list";
@@ -45,10 +46,12 @@ function SimplifyDebtsModal({ open, onClose, groupId }) {
     open ? { groupId } : "skip"
   );
 
-  // ✅ No more useCurrentUser — use the query that exists in your users.js
+  // Uses getCurrentUserPublic which exists in your users.js
   const { data: currentUser } = useConvexQuery(api.users.getCurrentUserPublic);
 
-  const { mutate: createSettlement } = useConvexMutation(api.settlements.createSettlement);
+  const { mutate: createSettlement } = useConvexMutation(
+    api.settlements.createSettlement
+  );
 
   const handleSettle = async (transaction, index) => {
     setSettlingIndex(index);
@@ -60,10 +63,9 @@ function SimplifyDebtsModal({ open, onClose, groupId }) {
         groupId,
         note: "Simplified debt settlement",
       });
-
       setSettledIndexes((prev) => new Set([...prev, index]));
       toast.success(
-        "Settled ₹" + transaction.amount.toFixed(2) + " with " + transaction.to.name
+        `Settled $${transaction.amount.toFixed(2)} with ${transaction.to.name}`
       );
     } catch (err) {
       toast.error("Failed to record settlement");
@@ -80,26 +82,38 @@ function SimplifyDebtsModal({ open, onClose, groupId }) {
 
   const transactions = simplifyData?.transactions ?? [];
   const saved = simplifyData?.savedTransactions ?? 0;
-console.log("currentUser._id:", currentUser?._id);
-console.log("transaction.from.id:", transactions[0]?.from?.id);
+
   return (
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-xl">
             <Sparkles className="h-5 w-5 text-primary" />
-            Simplified Debts
+            Simplify Debts
           </DialogTitle>
           <DialogDescription>
-            Minimum transactions needed to settle all balances in this group.
+            Minimum transactions to settle all balances — using only existing
+            debt relationships.
           </DialogDescription>
         </DialogHeader>
+
+        {/* Algorithm info banner */}
+        {!simplifyLoading && transactions.length > 0 && (
+          <div className="flex items-start gap-2 bg-muted/60 rounded-lg px-3 py-2 text-xs text-muted-foreground">
+            <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+            <span>
+              Powered by Dinic&apos;s max-flow algorithm — the same approach
+              used by Splitwise. Only existing creditor-debtor relationships are
+              used; no new ones are introduced.
+            </span>
+          </div>
+        )}
 
         {/* Loading */}
         {simplifyLoading && (
           <div className="py-8 flex flex-col items-center gap-3 text-muted-foreground">
             <Loader2 className="h-6 w-6 animate-spin" />
-            <p className="text-sm">Computing simplified debts…</p>
+            <p className="text-sm">Running max-flow algorithm…</p>
           </div>
         )}
 
@@ -119,6 +133,7 @@ console.log("transaction.from.id:", transactions[0]?.from?.id);
         {/* Transaction list */}
         {!simplifyLoading && transactions.length > 0 && (
           <div className="space-y-3">
+            {/* Stats bar */}
             <div className="flex items-center justify-between bg-muted/50 rounded-lg px-3 py-2">
               <span className="text-sm text-muted-foreground">
                 {transactions.length} transaction
@@ -127,16 +142,17 @@ console.log("transaction.from.id:", transactions[0]?.from?.id);
               {saved > 0 && (
                 <Badge variant="secondary" className="text-xs gap-1">
                   <Sparkles className="h-3 w-3" />
-                  {saved} saved
+                  {saved} eliminated
                 </Badge>
               )}
             </div>
 
+            {/* Rows */}
             {transactions.map((t, i) => {
               const isSettled = settledIndexes.has(i);
               const isSettling = settlingIndex === i;
-              // ✅ _id comparison — both are Convex string IDs
               const isMyDebt = currentUser?._id === t.from.id;
+              const isOwedToMe = currentUser?._id === t.to.id;
               const canSettle = isMyDebt && !isSettled;
 
               return (
@@ -147,6 +163,8 @@ console.log("transaction.from.id:", transactions[0]?.from?.id);
                       ? "bg-green-500/5 border-green-500/20 opacity-60"
                       : isMyDebt
                       ? "bg-primary/5 border-primary/30"
+                      : isOwedToMe
+                      ? "bg-green-500/5 border-green-500/20"
                       : "bg-card border-border"
                   }`}
                 >
@@ -166,7 +184,7 @@ console.log("transaction.from.id:", transactions[0]?.from?.id);
                   {/* Amount + arrow */}
                   <div className="flex flex-col items-center shrink-0">
                     <span className="text-xs font-semibold text-primary">
-                      ₹{t.amount.toFixed(2)}
+                      ${t.amount.toFixed(2)}
                     </span>
                     <ArrowRight className="h-4 w-4 text-muted-foreground" />
                   </div>
@@ -174,7 +192,7 @@ console.log("transaction.from.id:", transactions[0]?.from?.id);
                   {/* To */}
                   <div className="flex items-center gap-2 flex-1 min-w-0 justify-end">
                     <span className="text-sm font-medium truncate">
-                      {currentUser?._id === t.to.id ? "You" : t.to.name}
+                      {isOwedToMe ? "You" : t.to.name}
                     </span>
                     <Avatar className="h-8 w-8 shrink-0">
                       <AvatarImage src={t.to.imageUrl} />
@@ -184,9 +202,17 @@ console.log("transaction.from.id:", transactions[0]?.from?.id);
                     </Avatar>
                   </div>
 
-                  {/* Settle button */}
+                  {/* Action */}
                   {isSettled ? (
                     <CheckCircle className="h-5 w-5 text-green-500 shrink-0" />
+                  ) : isOwedToMe ? (
+                    // You are the receiver — show a passive "awaiting" state
+                    <Badge
+                      variant="outline"
+                      className="shrink-0 ml-1 text-xs text-green-600 border-green-400"
+                    >
+                      Awaiting
+                    </Badge>
                   ) : (
                     <Button
                       size="sm"
@@ -208,8 +234,20 @@ console.log("transaction.from.id:", transactions[0]?.from?.id);
               );
             })}
 
-            <p className="text-xs text-muted-foreground text-center pt-1">
-              Highlighted rows are your debts. Only you can settle your own.
+            {/* Legend */}
+            <div className="flex items-center gap-4 pt-1 justify-center">
+              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <span className="w-2.5 h-2.5 rounded-sm bg-primary/20 border border-primary/30" />
+                You owe
+              </span>
+              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <span className="w-2.5 h-2.5 rounded-sm bg-green-500/15 border border-green-500/30" />
+                Owed to you
+              </span>
+            </div>
+
+            <p className="text-xs text-muted-foreground text-center">
+              Only you can settle your own debts.
             </p>
           </div>
         )}
@@ -299,6 +337,7 @@ export default function GroupExpensesPage() {
         </div>
       </div>
 
+      {/* Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
         <div className="lg:col-span-2">
           <Card>
@@ -310,7 +349,6 @@ export default function GroupExpensesPage() {
             </CardContent>
           </Card>
         </div>
-
         <div>
           <Card>
             <CardHeader className="pb-2">
@@ -323,6 +361,7 @@ export default function GroupExpensesPage() {
         </div>
       </div>
 
+      {/* Tabs */}
       <Tabs
         defaultValue="expenses"
         value={activeTab}
