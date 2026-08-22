@@ -118,176 +118,118 @@ export const deleteExpense = mutation({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SIMPLIFY DEBTS  —  Splitwise algorithm via Dinic's Max-Flow
+// SIMPLIFY DEBTS  —  Optimal Account Balancing (LeetCode 465)
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// Reference: https://medium.com/@mithunmk93/algorithm-behind-splitwises-debt-simplification-feature-8ac485e97688
+// ALGORITHM (from LLD Splitwise video):
+// ──────────────────────────────────────
 //
-// WHY MAX-FLOW instead of greedy min-cash-flow?
-// ─────────────────────────────────────────────
-// The greedy approach can introduce NEW debt relationships
-// (e.g. "Alice pays Carol" even if they never shared an expense).
-// Splitwise's Rule 2 says: "No one owes a person they didn't owe before."
+// Step 1 — Compute net balance per person
+//   positive → creditor (owed money)
+//   negative → debtor   (owes money)
+//   zero     → skip
 //
-// The max-flow approach only modifies WEIGHTS on EXISTING edges.
-// It never introduces a new creditor-debtor relationship.
+// Step 2 — DFS with backtracking
+//   For current person (idx), try pairing with every later person
+//   who has the OPPOSITE sign (one owes, other is owed).
 //
-// ALGORITHM (per article):
-// ─────────────────────────
-// 1. Build directed debt graph from all expenses & settlements.
-// 2. For each existing edge (u → v):
-//    a. Run Dinic's max-flow from u to v through the ENTIRE current graph.
-//    b. The max-flow value = maximised debt on edge (u → v).
-//    c. Record edge (u, v, max-flow) in result.
-//    d. Replace current graph with the residual graph (remaining capacities).
-// 3. Final result = simplified edge list with minimum redundant transactions.
+//   On each pairing:
+//     amount  = min(|cur|, |next|)      — smaller side fully settled
+//     bals[j] = cur + next              — merge; carry remainder in bals[j]
+//     recurse from idx + 1              — cur is now consumed
+//     backtrack: restore bals[j] = next — try next candidate
 //
-// COMPLEXITY: O(V² · E²)  —  negligible for group sizes in practice.
+//   Early exit: if cur + next == 0 (perfect cancellation) → break,
+//   no pairing can produce a smaller remainder.
+//
+//   Track the globally minimum transaction list across all branches.
+//
+// WHY BETTER THAN GREEDY MIN-CASH-FLOW:
+// ──────────────────────────────────────
+//   Greedy pairs global max-creditor with max-debtor every time.
+//   This is locally optimal but can miss globally better groupings.
+//
+//   Example  balances = [-4, -3, +2, +2, +3]
+//     Greedy   → 4 transactions
+//     DFS BT   → 3 transactions  ✅  (finds -4+2+2=0 and -3+3=0)
+//
+// COMPLEXITY: O(N!)  — N = people with non-zero balance (≤ 10-15 in practice)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const EPSILON = 0.005; // ignore sub-half-cent floating-point noise
+const EPSILON = 0.005;
 
 /**
- * Run Dinic's max-flow on `graph` from source `s` to sink `t`.
- * Mutates graph capacities in place (standard Dinic's behaviour).
- * Returns the total flow value.
+ * Find the minimum-transaction settlement using DFS + backtracking.
  *
- * @param {Array<Array<{to:number, cap:number, rev:number}>>} graph
- * @param {number} n   number of nodes
- * @param {number} s   source node index
- * @param {number} t   sink node index
- * @returns {number}
- */
-function dinic(graph, n, s, t) {
-  // BFS: build level graph, return true if sink is reachable
-  const bfs = (level) => {
-    level.fill(-1);
-    level[s] = 0;
-    const q = [s];
-    for (let qi = 0; qi < q.length; qi++) {
-      const v = q[qi];
-      for (const e of graph[v]) {
-        if (e.cap > EPSILON && level[e.to] < 0) {
-          level[e.to] = level[v] + 1;
-          q.push(e.to);
-        }
-      }
-    }
-    return level[t] >= 0;
-  };
-
-  // DFS: send blocking flow along level graph
-  const dfs = (v, pushed, level, iter) => {
-    if (v === t) return pushed;
-    for (; iter[v] < graph[v].length; iter[v]++) {
-      const e = graph[v][iter[v]];
-      if (e.cap > EPSILON && level[e.to] === level[v] + 1) {
-        const d = dfs(e.to, Math.min(pushed, e.cap), level, iter);
-        if (d > EPSILON) {
-          e.cap -= d;
-          graph[e.to][e.rev].cap += d;
-          return d;
-        }
-      }
-    }
-    return 0;
-  };
-
-  const level = new Array(n);
-  let flow = 0;
-  while (bfs(level)) {
-    const iter = new Array(n).fill(0);
-    let f;
-    while ((f = dfs(s, Infinity, level, iter)) > EPSILON) flow += f;
-  }
-  return flow;
-}
-
-/**
- * Splitwise-style debt simplification using Dinic's Max-Flow.
- *
- * @param {{ from: string, to: string, amount: number }[]} rawDebts
- *   One entry per (debtor → creditor) relationship.
- *   Duplicates are summed; settlements are passed as reverse debts.
- *
+ * @param {{ [uid: string]: number }} netBalances
  * @returns {{ from: string, to: string, amount: number }[]}
- *   Simplified edge list — only existing relationships, weights maximised.
  */
-function simplifyDebtsMaxFlow(rawDebts) {
-  if (!rawDebts.length) return [];
+function optimalSettlement(netBalances) {
+  // Filter out zero balances
+  const people = Object.entries(netBalances).filter(
+    ([, b]) => Math.abs(b) > EPSILON
+  );
+  if (!people.length) return [];
 
-  // ── 1. Build node index ───────────────────────────────────────────────────
-  const userSet = new Set();
-  rawDebts.forEach(({ from, to }) => { userSet.add(from); userSet.add(to); });
-  const users = [...userSet];
-  const idx = Object.fromEntries(users.map((u, i) => [u, i]));
-  const n = users.length;
+  const uids = people.map(([uid]) => uid);
+  const bals = people.map(([, b]) => b); // mutable working copy
+  const n = bals.length;
 
-  // ── 2. Build net debt matrix  debt[i][j] = i owes j ─────────────────────
-  const debt = Array.from({ length: n }, () => new Array(n).fill(0));
-  rawDebts.forEach(({ from, to, amount }) => {
-    debt[idx[from]][idx[to]] += amount;
-  });
+  let bestList  = null;
+  let bestCount = Infinity;
 
-  // Net opposing debts between each pair (A owes B $10, B owes A $7 → A owes B $3)
-  for (let i = 0; i < n; i++) {
-    for (let j = i + 1; j < n; j++) {
-      const net = debt[i][j] - debt[j][i];
-      debt[i][j] = net > 0 ? net : 0;
-      debt[j][i] = net < 0 ? -net : 0;
-    }
-  }
+  const dfs = (idx, txns) => {
+    // Skip already-settled (zero) balances
+    while (idx < n && Math.abs(bals[idx]) < EPSILON) idx++;
 
-  // ── 3. Record original edges (before any flow is run) ────────────────────
-  const originalEdges = [];
-  for (let i = 0; i < n; i++)
-    for (let j = 0; j < n; j++)
-      if (debt[i][j] > EPSILON) originalEdges.push([i, j]);
-
-  // ── 4. Main loop: maximise flow on each original edge ────────────────────
-  let current = debt.map((r) => [...r]); // working copy — updated after each max-flow run
-  const result = [];
-
-  for (const [u, v] of originalEdges) {
-    if (current[u][v] <= EPSILON) continue; // already consumed by a previous flow
-
-    // Build a fresh Dinic's graph from the current debt matrix.
-    // We track forward-edge references so we can read residual capacities afterwards.
-    const graph = Array.from({ length: n }, () => []);
-    const fwdRefs = []; // { from, to, nodeIdx, edgeIdx }
-
-    for (let i = 0; i < n; i++) {
-      for (let j = 0; j < n; j++) {
-        if (current[i][j] > EPSILON) {
-          const fwdIdx = graph[i].length;
-          const revIdx = graph[j].length;
-          graph[i].push({ to: j, cap: current[i][j], rev: revIdx });
-          graph[j].push({ to: i, cap: 0,              rev: fwdIdx });
-          fwdRefs.push({ from: i, to: j, nodeIdx: i, edgeIdx: fwdIdx });
-        }
+    // Base case: all balances settled
+    if (idx >= n) {
+      if (txns.length < bestCount) {
+        bestCount = txns.length;
+        bestList  = [...txns]; // snapshot best solution
       }
+      return txns.length;
     }
 
-    // Run Dinic's from u → v on the full graph (uses ALL paths, not just direct edge)
-    const flow = dinic(graph, n, u, v);
+    const cur = bals[idx];
+    let min = Infinity;
 
-    if (flow > EPSILON) {
-      result.push({ from: u, to: v, amount: Math.round(flow * 100) / 100 });
+    for (let j = idx + 1; j < n; j++) {
+      const next = bals[j];
 
-      // Rebuild current debt matrix from residual forward-edge capacities
-      const next = Array.from({ length: n }, () => new Array(n).fill(0));
-      for (const { from, to, nodeIdx, edgeIdx } of fwdRefs) {
-        const remaining = graph[nodeIdx][edgeIdx].cap;
-        if (remaining > EPSILON) next[from][to] = remaining;
-      }
-      current = next;
+      // Only pair opposite signs: debtor ↔ creditor
+      if (cur * next >= 0) continue;
+
+      // Amount settled in this single transaction
+      const amount = Math.round(Math.min(Math.abs(cur), Math.abs(next)) * 100) / 100;
+
+      // Direction: negative balance = debtor (pays), positive = creditor (receives)
+      const from = cur < 0 ? idx : j;
+      const to   = cur < 0 ? j   : idx;
+
+      // Merge cur into bals[j], recurse past idx
+      bals[j] = cur + next;
+      txns.push({ from, to, amount });
+
+      const count = 1 + dfs(idx + 1, txns);
+      if (count < min) min = count;
+
+      // Backtrack
+      txns.pop();
+      bals[j] = next;
+
+      // Perfect cancellation — break early, can't do better
+      if (Math.abs(cur + next) < EPSILON) break;
     }
-  }
 
-  // ── 5. Map node indices back to user IDs ─────────────────────────────────
-  return result.map(({ from, to, amount }) => ({
-    from: users[from],
-    to: users[to],
+    return min === Infinity ? 0 : min;
+  };
+
+  dfs(0, []);
+
+  return (bestList ?? []).map(({ from, to, amount }) => ({
+    from: uids[from],
+    to:   uids[to],
     amount,
   }));
 }
@@ -298,13 +240,13 @@ export const getSimplifiedDebts = query({
   handler: async (ctx, { groupId }) => {
     const me = await ctx.runQuery(internal.users.getCurrentUser);
 
-    // ── Auth ─────────────────────────────────────────────────────────────────
+    // ── Auth ──────────────────────────────────────────────────────────────────
     const group = await ctx.db.get(groupId);
     if (!group) throw new Error("Group not found");
     if (!group.members.some((m) => m.userId === me._id))
       throw new Error("You are not a member of this group");
 
-    // ── Fetch data ────────────────────────────────────────────────────────────
+    // ── Fetch ─────────────────────────────────────────────────────────────────
     const expenses = await ctx.db
       .query("expenses")
       .withIndex("by_group", (q) => q.eq("groupId", groupId))
@@ -315,45 +257,49 @@ export const getSimplifiedDebts = query({
       .withIndex("by_group", (q) => q.eq("groupId", groupId))
       .collect();
 
-    // ── Build raw debt list ───────────────────────────────────────────────────
-    // Each unpaid expense split  →  debtor owes payer
-    // Each settlement            →  modelled as reverse debt (reduces original)
-    const rawDebts = [];
+    // ── Step 1: net balance per person ────────────────────────────────────────
+    //   balance > 0  →  owed money  (creditor)
+    //   balance < 0  →  owes money  (debtor)
+    const balance = {};
+    const add = (uid, amt) => { balance[uid] = (balance[uid] ?? 0) + amt; };
+
+    for (const m of group.members) add(m.userId, 0); // initialise everyone
 
     for (const exp of expenses) {
       for (const split of exp.splits) {
         if (split.paid) continue;
-        if (split.userId === exp.paidByUserId) continue; // payer's own share
-        rawDebts.push({
-          from: split.userId,      // debtor
-          to: exp.paidByUserId,    // creditor (payer)
-          amount: split.amount,
-        });
+        if (split.userId === exp.paidByUserId) continue;
+        add(exp.paidByUserId, +split.amount); // payer is owed
+        add(split.userId,     -split.amount); // participant owes
       }
     }
 
     for (const s of settlements) {
-      // paidByUserId already paid receivedByUserId →
-      // model as receivedByUserId owing paidByUserId back (reduces net debt)
-      rawDebts.push({
-        from: s.receivedByUserId,
-        to: s.paidByUserId,
-        amount: s.amount,
-      });
+      add(s.paidByUserId,     +s.amount); // paid → debt reduced
+      add(s.receivedByUserId, -s.amount); // received → credit reduced
     }
 
-    // ── Run Splitwise max-flow algorithm ──────────────────────────────────────
-    const simplified = simplifyDebtsMaxFlow(rawDebts);
+    // ── Step 2: DFS backtracking → optimal transaction list ───────────────────
+    const simplified = optimalSettlement(balance);
 
-    if (!simplified.length) return { transactions: [], totalTransactions: 0, savedTransactions: 0 };
+    if (!simplified.length) {
+      return { transactions: [], totalTransactions: 0, savedTransactions: 0 };
+    }
 
-    // ── Hydrate user info ─────────────────────────────────────────────────────
+    // ── Step 3: hydrate user info ─────────────────────────────────────────────
     const allUserIds = [...new Set(simplified.flatMap(({ from, to }) => [from, to]))];
     const userMap = {};
     await Promise.all(
       allUserIds.map(async (uid) => {
         const u = await ctx.db.get(uid);
-        if (u) userMap[uid] = { id: u._id, name: u.name, email: u.email, imageUrl: u.imageUrl ?? null };
+        if (u) {
+          userMap[uid] = {
+            id:       u._id,
+            name:     u.name,
+            email:    u.email,
+            imageUrl: u.imageUrl ?? null,
+          };
+        }
       })
     );
 
@@ -363,10 +309,15 @@ export const getSimplifiedDebts = query({
       amount,
     }));
 
+    // naive count = one txn per person with non-zero balance minus 1
+    const nonZeroCount = Object.values(balance).filter(
+      (b) => Math.abs(b) > EPSILON
+    ).length;
+
     return {
       transactions,
       totalTransactions: transactions.length,
-      savedTransactions: Math.max(0, rawDebts.length - transactions.length),
+      savedTransactions: Math.max(0, (nonZeroCount - 1) - transactions.length),
     };
   },
 });
