@@ -13,16 +13,6 @@ import { usePathname } from "next/navigation";
 
 export default function Header() {
   const { isLoading } = useStoreUser();
-  /* function useStoreUser() {
-  return {
-    user: { name: "Pranav" },
-    isLoading: true,
-  };
-} 
-const { isLoading } = useStoreUser();
-const temp = useStoreUser();
-const isLoading = temp.isLoading;  
-*/
   const path = usePathname();
 
   return (
@@ -31,7 +21,7 @@ const isLoading = temp.isLoading;
         <Link href="/" className="flex items-center gap-2">
           <Image
             src={"/logos/logo.png"}
-            alt="Vehiql Logo"
+            alt="Splitr Logo"
             width={200}
             height={60}
             className="h-11 w-auto object-contain"

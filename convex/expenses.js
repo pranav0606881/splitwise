@@ -123,7 +123,6 @@ export const deleteExpense = mutation({
 //
 // ALGORITHM (from LLD Splitwise video):
 // ──────────────────────────────────────
-//
 // Step 1 — Compute net balance per person
 //   positive → creditor (owed money)
 //   negative → debtor   (owes money)
@@ -154,7 +153,7 @@ export const deleteExpense = mutation({
 //     DFS BT   → 3 transactions  ✅  (finds -4+2+2=0 and -3+3=0)
 //
 // COMPLEXITY: O(N!)  — N = people with non-zero balance (≤ 10-15 in practice)
-// ─────────────────────────────────────────────────────────────────────────────
+
 
 const EPSILON = 0.005;
 

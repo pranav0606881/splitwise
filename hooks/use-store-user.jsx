@@ -6,13 +6,13 @@ import { api } from "../convex/_generated/api";
 
 export function useStoreUser() {  
   const { isLoading, isAuthenticated } = useConvexAuth();
-  const { user } = useUser();
+  const { isLoaded: isUserLoaded, user } = useUser();
   const [userId, setUserId] = useState(null);
   const storeUser = useMutation(api.users.store);
 
   useEffect(() => {
-    console.log("🔄 Auth state:", {isLoading, isAuthenticated});
-    if (!isAuthenticated) return;
+    console.log("🔄 Auth state:", { isLoading, isAuthenticated, isUserLoaded });
+    if (!isAuthenticated || !isUserLoaded || !user) return;
 
     async function createUser() {
       try {
@@ -20,16 +20,22 @@ export function useStoreUser() {
           user?.primaryEmailAddress?.emailAddress ||
           user?.emailAddresses?.[0]?.emailAddress ||
           user?.email;
+
+        if (!preferredEmail) {
+          console.warn("User email not yet available from Clerk");
+          return;
+        }
+
         const name =
           user?.fullName?.trim() ||
           [user?.firstName, user?.lastName]
             .filter(Boolean)
             .join(" ")
             .trim() ||
-          (preferredEmail ? preferredEmail.split("@")[0] : null) ||
+          preferredEmail.split("@")[0] ||
           "Anonymous";
-        const email = preferredEmail || "unknown@clerk.dev";
-        const imageUrl = user?.profileImageUrl || user?.imageUrl || null;
+        const email = preferredEmail;
+        const imageUrl = user?.imageUrl || user?.profileImageUrl || null;
 
         console.log("📡 Calling storeUser mutation with:", {
           authIdentifier: user?.id,
@@ -52,10 +58,10 @@ export function useStoreUser() {
 
     createUser();
     return () => setUserId(null);
-  }, [isAuthenticated, storeUser, user?.id]);
+  }, [isAuthenticated, isUserLoaded, storeUser, user]);
 
   return {
-    isLoading: isLoading || (isAuthenticated && userId === null),
+    isLoading: isLoading || !isUserLoaded || (isAuthenticated && userId === null),
     isAuthenticated: isAuthenticated && userId !== null,
   };
 }
